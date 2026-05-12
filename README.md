@@ -1,5 +1,7 @@
 # personal-posit-mlops-demo
 
+**Live apps:** [Recovery Predictor](https://019e1a24-eacf-d91b-b0be-ca27f3127c5e.share.connect.posit.cloud/) | [Recovery Monitoring](https://019e1a33-702d-b0e0-d690-c7f82425c015.share.connect.posit.cloud/)
+
 End-to-end ML deployment demo mirroring a production Posit Connect architecture, built on a fully public stack: Posit Connect Cloud for Shiny apps, GitHub Actions for scheduled training and scoring, GitHub-hosted pins for versioned model artifacts. Uses a synthetic multi-stage bioprocess recovery dataset to demonstrate idempotent batch scoring, time-decay sample weighting, drift monitoring, and calibration tracking.
 
 ## Architecture
@@ -123,6 +125,11 @@ Currently scaffolded: everything except `renv.lock`. The full pipeline runs end-
 
 ## Public deployment
 
-* Shiny apps publish to Posit Connect Cloud via its GitHub integration; commit and push, Connect Cloud auto-deploys
-* Scheduled jobs run as GitHub Actions cron workflows that execute the scripts above and commit updated pins back to the repo
-* Quarto reports (rendered HTML from train, score, metrics) can be served from a `gh-pages` branch or published to Quarto Pub
+Live on Posit Connect Cloud (via the platform's GitHub integration: commit to `main`, Connect Cloud auto-rebuilds):
+
+* **Recovery Predictor** Shiny app: https://019e1a24-eacf-d91b-b0be-ca27f3127c5e.share.connect.posit.cloud/
+* **Recovery Monitoring** Shiny app: https://019e1a33-702d-b0e0-d690-c7f82425c015.share.connect.posit.cloud/
+
+Scheduled jobs run as GitHub Actions cron workflows that execute the pipeline scripts and commit updated pins plus rendered HTML back to the repo. Quarto audit-trail HTMLs (`apps/recovery_{training,scoring,metrics}/*.html`) are committed alongside each scheduled run and can be served from a `gh-pages` branch or published to Quarto Pub if a public link is desired.
+
+Each Shiny app's `manifest.json` declares R 4.3.1 and the CRAN packages Connect Cloud installs at build time. A `.Rprofile` at the project root pins `options(repos = c(CRAN = "https://cloud.r-project.org"))` so any future `rsconnect::writeManifest()` runs from this project always capture public CRAN.
