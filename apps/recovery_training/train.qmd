@@ -33,14 +33,11 @@ primitives    <- pin_read(board, "recovery_primitives")
 upstream_hash <- substr(digest(primitives, algo = "sha256"), 1, 12)
 
 knitr::kable(data.frame(
-  metric = c("Total batches", "Completed batches", "Termination rate",
-             "Date range", "Upstream hash"),
+  metric = c("Batches", "Date range", "Upstream hash"),
   value  = c(
     nrow(primitives),
-    sum(primitives$outcome_status == "Completed"),
-    sprintf("%.1f%%", 100 * mean(primitives$outcome_status == "Terminated")),
-    paste(format(min(primitives$collection_date)),
-          format(max(primitives$collection_date)), sep = " to "),
+    paste(format(min(primitives$mfg_date)),
+          format(max(primitives$mfg_date)), sep = " to "),
     upstream_hash
   )
 ))
@@ -51,7 +48,7 @@ knitr::kable(data.frame(
 ```{r}
 model <- new_recovery_model(
   primitives,
-  reference_date = max(primitives$collection_date),
+  reference_date = max(primitives$mfg_date),
   decay_tau_days = 180,
   upstream_hash  = upstream_hash
 )
@@ -59,8 +56,8 @@ model
 ```
 
 Time-decay weighting reduces the effective sample size from `r model$n_pool`
-completed batches to `r round(model$decay_ess, 1)`, emphasizing recent
-batches to track non-stationarity in stage 3 recovery.
+batches to `r round(model$decay_ess, 1)`, emphasizing recent batches to track
+non-stationarity in stage 3 recovery.
 
 ## Publish
 
@@ -71,7 +68,7 @@ pin_write(
   name        = "recovery_model",
   type        = "rds",
   title       = "Multi-stage bootstrap recovery model",
-  description = sprintf("Trained on %d completed batches; decay tau %d days; ESS %.1f.",
+  description = sprintf("Trained on %d batches; decay tau %d days; ESS %.1f.",
                         model$n_pool, model$decay_tau_days, model$decay_ess),
   metadata    = list(
     n_pool         = model$n_pool,
