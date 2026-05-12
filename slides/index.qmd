@@ -285,10 +285,11 @@ ggplot(batches_r, aes(x = mfg_date, y = ratio)) +
                                  "Stage 2 recovery" = slate_mut,
                                  "Stage 3 recovery" = accent)) +
   scale_y_continuous(labels = label_percent(accuracy = 1)) +
-  scale_x_date(date_labels = "%Y-%m") +
+  scale_x_date(date_labels = "%Y-%m", date_breaks = "6 months") +
   facet_wrap(~ stage, ncol = 3) +
   labs(x = "Manufacturing date", y = "Stage recovery ratio") +
-  deck_theme(base_size = 13)
+  deck_theme(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
 ```
 
 [Source: derived from `stageN_output / pmin(stageN-1_output, cap)` per batch]{.source}
