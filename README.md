@@ -73,7 +73,7 @@ The simulator shifts the stage 3 recovery mean upward by 4 percentage points per
 1. Pinned model artifacts with metadata (upstream hash, decay params, effective sample size)
 2. Idempotent batch scoring via anti-join on `(batch_id, model_pin_hash)`
 3. Time-decay sample weighting for non-stationary distributions
-4. Multi-stage chain prediction with saturation caps
+4. Multi-stage chain prediction
 5. Quarto-as-pipeline (code plus audit-trail HTML in one artifact)
 6. Rolling KS drift tests and PIT calibration in a live dashboard
 7. Graceful degradation when optional pins are missing
