@@ -66,7 +66,7 @@ The simulator publishes `recovery_primitives` with:
 
 ## Drift design
 
-The simulator shifts the stage 3 recovery mean upward by 4 percentage points per simulated year, with stages 1 and 2 stationary. Over a 2-year span this drives median yield from 4.7e8 to 5.3e8. This non-stationarity is what time-decay weighting in training compensates for, and what KS drift tests in metrics surface to the monitoring dashboard. Reproducible via `set.seed(42)`.
+The simulator shifts the stage 3 recovery mean upward by 6 percentage points per simulated year, with stages 1 and 2 stationary. A per-batch latent quality term additionally introduces realistic positive correlation among the three stage recoveries (good batches recover more across the whole chain). The drift is what time-decay weighting in training compensates for, and what KS drift tests in metrics surface to the monitoring dashboard. Reproducible via `set.seed(42)`.
 
 ## Patterns showcased
 

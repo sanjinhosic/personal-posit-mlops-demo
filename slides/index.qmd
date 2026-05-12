@@ -1,0 +1,468 @@
+---
+title: "Multi-stage recovery yield prediction"
+subtitle: "Joint Monte Carlo plus time-decay weighting, deployed end-to-end on Posit Connect Cloud."
+author: "Sanjin Hosic"
+date: today
+date-format: "YYYY-MM-DD"
+format:
+  revealjs:
+    theme: [default, theme/sanjinhosic.scss]
+    width: 1280
+    height: 720
+    slide-number: c/t
+    progress: true
+    history: true
+    transition: fade
+    background-transition: fade
+    incremental: false
+    fig-align: center
+    fig-format: svg
+    fig-width: 9
+    fig-height: 4.4
+    embed-resources: true
+    code-line-numbers: false
+    menu: false
+    footer: "Posit Connect MLOps Demo"
+execute:
+  echo: false
+  warning: false
+  message: false
+knitr:
+  opts_chunk:
+    dev: svg
+    dev.args:
+      bg: transparent
+---
+
+```{r setup}
+#| include: false
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(tibble)
+  library(ggplot2)
+  library(scales)
+  library(purrr)
+  library(knitr)
+  library(patchwork)
+})
+
+source(here::here("R", "simulator.R"))
+source(here::here("R", "recovery_model.R"))
+
+# Palette (must match slides SCSS)
+navy_bg   <- "#0a192f"
+slate_dim <- "#475569"
+slate_mut <- "#8892b0"
+slate_bod <- "#ccd6f6"
+slate_lt  <- "#a8b2d1"
+accent    <- "#64ffda"
+white     <- "#e6f1ff"
+
+deck_theme <- function(base_size = 13) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      text             = element_text(colour = slate_bod, family = "Inter"),
+      panel.background = element_rect(fill = NA, color = NA),
+      plot.background  = element_rect(fill = NA, color = NA),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.title       = element_text(colour = slate_mut, size = base_size),
+      axis.title.x     = element_text(margin = margin(t = 10)),
+      axis.title.y     = element_text(margin = margin(r = 10)),
+      axis.text        = element_text(colour = slate_lt, size = base_size - 1),
+      axis.line        = element_line(colour = slate_mut, linewidth = 0.35),
+      axis.ticks       = element_line(colour = slate_mut, linewidth = 0.35),
+      axis.ticks.length = unit(3, "pt"),
+      strip.text       = element_text(colour = slate_bod, hjust = 0, face = "bold",
+                                      size = base_size, margin = margin(b = 4)),
+      strip.background = element_blank(),
+      legend.position  = "top",
+      legend.justification = "left",
+      legend.title     = element_blank(),
+      legend.text      = element_text(colour = slate_bod, size = base_size - 1),
+      legend.background = element_rect(fill = NA, colour = NA),
+      legend.key       = element_rect(fill = NA, colour = NA),
+      legend.key.width = unit(20, "pt"),
+      plot.margin      = margin(8, 12, 8, 12),
+      plot.title       = element_blank(),
+      plot.subtitle    = element_blank(),
+      plot.caption     = element_blank()
+    )
+}
+
+# Generate the synthetic pool ONCE
+set.seed(42)
+batches <- generate_recovery_batches(n_batches = 500)
+model   <- new_recovery_model(batches, reference_date = max(batches$mfg_date))
+
+# Helpers for slide 3 (joint vs independent sampling)
+chain_yield_local <- function(input_cells, r1, r2, r3, caps) {
+  s1 <- pmin(pmin(input_cells, caps$input) * r1, caps$stage1)
+  s2 <- pmin(s1 * r2, caps$stage2)
+  s2 * r3
+}
+```
+
+## Predict final yield for a new batch from a pool of historical multi-stage recoveries {#sec-setup}
+
+[01 / Setup]{.tracker}
+
+::: {.kicker}
+Each completed batch (faint slate) passes through three sequential stages with denominator caps. The cyan line is the cohort median.
+:::
+
+```{r}
+#| fig-width: 11
+#| fig-height: 4.0
+batch_long <- batches %>%
+  select(batch_id, input_cells, stage1_output, stage2_output, stage3_output) %>%
+  pivot_longer(c(input_cells, stage1_output, stage2_output, stage3_output),
+               names_to = "stage", values_to = "cells") %>%
+  mutate(
+    stage_num   = case_when(
+      stage == "input_cells"   ~ 0L,
+      stage == "stage1_output" ~ 1L,
+      stage == "stage2_output" ~ 2L,
+      stage == "stage3_output" ~ 3L
+    ),
+    stage_label = factor(stage_num,
+                         levels = 0:3,
+                         labels = c("Input cells",
+                                    "After stage 1",
+                                    "After stage 2",
+                                    "Final yield"))
+  )
+
+caps_df <- data.frame(
+  stage_label = factor(c("Input cells", "After stage 1", "After stage 2"),
+                       levels = levels(batch_long$stage_label)),
+  cap = c(5e9, 3e9, 1e9)
+)
+
+ggplot(batch_long, aes(x = stage_label, y = cells)) +
+  geom_line(aes(group = batch_id),
+            alpha = 0.08, colour = slate_mut, linewidth = 0.35) +
+  geom_hline(data = caps_df, aes(yintercept = cap),
+             linetype = "dashed", colour = slate_dim, linewidth = 0.35) +
+  stat_summary(aes(group = 1), fun = median, geom = "line",
+               colour = accent, linewidth = 1.4) +
+  stat_summary(aes(group = 1), fun = median, geom = "point",
+               colour = accent, size = 3.4) +
+  annotate("text",
+           x = c(1, 2, 3), y = c(5e9, 3e9, 1e9),
+           hjust = 1.05, vjust = -0.55,
+           label = c("cap 5e9", "cap 3e9", "cap 1e9"),
+           family = "JetBrains Mono", colour = slate_dim, size = 3.6) +
+  scale_y_continuous(labels = label_number(scale = 1e-9, suffix = "B"),
+                     limits = c(0, 5.8e9), expand = c(0, 0)) +
+  labs(x = NULL, y = "Cells per batch") +
+  deck_theme(base_size = 13)
+```
+
+[Source: R/simulator.R · seed 42 · n = 500 batches over 24 months]{.source}
+
+
+## Joint resampling of whole batches preserves real covariance; independent marginal sampling falsely narrows the predictive bands {#sec-joint}
+
+[02 / Methodology]{.tracker}
+
+::: {.kicker}
+At 2e9 input cells, sampling stage ratios independently (slate) understates predictive spread by ignoring positive within-batch correlation. Joint sampling (cyan) preserves the wider, more honest distribution.
+:::
+
+```{r}
+#| fig-width: 11
+#| fig-height: 4.0
+set.seed(42)
+input_val <- 2e9
+n_draw    <- 6000
+
+# Joint draws (matched per-batch r1, r2, r3 triples)
+idx_j <- sample.int(model$n_pool, n_draw, replace = TRUE, prob = model$weights)
+r1_j  <- model$r1[idx_j]
+r2_j  <- model$r2[idx_j]
+r3_j  <- model$r3[idx_j]
+y_joint <- chain_yield_local(input_val, r1_j, r2_j, r3_j, model$caps)
+
+# Independent draws (each stage's ratio shuffled separately)
+idx1 <- sample.int(model$n_pool, n_draw, replace = TRUE, prob = model$weights)
+idx2 <- sample.int(model$n_pool, n_draw, replace = TRUE, prob = model$weights)
+idx3 <- sample.int(model$n_pool, n_draw, replace = TRUE, prob = model$weights)
+y_ind <- chain_yield_local(input_val, model$r1[idx1], model$r2[idx2], model$r3[idx3], model$caps)
+
+w_joint <- diff(quantile(y_joint, c(0.025, 0.975)))
+w_ind   <- diff(quantile(y_ind,   c(0.025, 0.975)))
+ind_narrower_pct <- round(100 * (1 - w_ind / w_joint))
+
+bands <- bind_rows(
+  tibble(method = "Independent marginals (biased)",
+         q025 = quantile(y_ind, 0.025),
+         q25  = quantile(y_ind, 0.25),
+         q50  = median(y_ind),
+         q75  = quantile(y_ind, 0.75),
+         q975 = quantile(y_ind, 0.975)),
+  tibble(method = "Joint sampling (correct)",
+         q025 = quantile(y_joint, 0.025),
+         q25  = quantile(y_joint, 0.25),
+         q50  = median(y_joint),
+         q75  = quantile(y_joint, 0.75),
+         q975 = quantile(y_joint, 0.975))
+) %>%
+  mutate(method = factor(method,
+                         levels = c("Independent marginals (biased)",
+                                    "Joint sampling (correct)")))
+
+ggplot(bands, aes(y = method, colour = method)) +
+  geom_linerange(aes(xmin = q025, xmax = q975),
+                 linewidth = 4, alpha = 0.35) +
+  geom_linerange(aes(xmin = q25, xmax = q75),
+                 linewidth = 11) +
+  geom_point(aes(x = q50),
+             size = 5.5, shape = 21, fill = navy_bg, stroke = 2) +
+  geom_text(aes(x = q025,
+                label = scales::label_number(scale = 1e-8, accuracy = 0.1, suffix = "e8")(q025)),
+            hjust = 1.2, family = "JetBrains Mono",
+            colour = slate_mut, size = 4) +
+  geom_text(aes(x = q975,
+                label = scales::label_number(scale = 1e-8, accuracy = 0.1, suffix = "e8")(q975)),
+            hjust = -0.2, family = "JetBrains Mono",
+            colour = slate_mut, size = 4) +
+  annotate("text", x = max(bands$q975) * 1.18, y = 1.5,
+           label = sprintf("Independent band\n≈ %d%% narrower\n(artificially)",
+                           ind_narrower_pct),
+           hjust = 0, vjust = 0.5,
+           family = "JetBrains Mono", colour = slate_mut, size = 4,
+           lineheight = 1.15) +
+  scale_x_continuous(labels = label_number(scale = 1e-8, suffix = "e8"),
+                     expand = expansion(mult = c(0.10, 0.30))) +
+  scale_colour_manual(values = c(
+    "Independent marginals (biased)" = slate_mut,
+    "Joint sampling (correct)"       = accent
+  )) +
+  labs(x = "Predicted final yield at 2e9 input cells (95% and 50% intervals; dot = median)",
+       y = NULL) +
+  deck_theme(base_size = 13) +
+  theme(legend.position = "none",
+        axis.text.y = element_text(colour = slate_bod, size = 13, face = "bold"),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank())
+```
+
+[Source: R/recovery_model.R `predict_yield` · n_compound = 6000 · independent variant shuffles r1, r2, r3 idx separately]{.source}
+
+
+## Stage 3 recovery drifts ~6 pp/yr, so a uniform bootstrap predicts the old process, not the current one {#sec-drift}
+
+[03 / Drift]{.tracker}
+
+::: {.kicker}
+Stage 3 recovery (cyan trend) climbs over the 24-month pool, while stages 1 and 2 stay flat. A uniformly weighted bootstrap inherits the older, lower-yield regime.
+:::
+
+```{r}
+#| fig-width: 11
+#| fig-height: 4.0
+batches_r <- batches %>%
+  mutate(
+    r1 = stage1_output / pmin(input_cells,   5e9),
+    r2 = stage2_output / pmin(stage1_output, 3e9),
+    r3 = stage3_output / pmin(stage2_output, 1e9)
+  ) %>%
+  select(mfg_date, r1, r2, r3) %>%
+  pivot_longer(c(r1, r2, r3), names_to = "stage", values_to = "ratio") %>%
+  mutate(stage = factor(stage,
+                        levels = c("r1", "r2", "r3"),
+                        labels = c("Stage 1 recovery",
+                                   "Stage 2 recovery",
+                                   "Stage 3 recovery")))
+
+ggplot(batches_r, aes(x = mfg_date, y = ratio)) +
+  geom_point(alpha = 0.18, size = 0.9, colour = slate_mut) +
+  geom_smooth(aes(colour = stage), method = "loess", se = FALSE,
+              linewidth = 1.1, show.legend = FALSE) +
+  scale_colour_manual(values = c("Stage 1 recovery" = slate_mut,
+                                 "Stage 2 recovery" = slate_mut,
+                                 "Stage 3 recovery" = accent)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1)) +
+  scale_x_date(date_labels = "%Y-%m") +
+  facet_wrap(~ stage, ncol = 3) +
+  labs(x = "Manufacturing date", y = "Stage recovery ratio") +
+  deck_theme(base_size = 13)
+```
+
+[Source: derived from `stageN_output / pmin(stageN-1_output, cap)` per batch]{.source}
+
+
+## Exponential time-decay weighting (τ = 180 days) lets recent batches dominate, tracking drift without retraining {#sec-decay}
+
+[04 / Weighting]{.tracker}
+
+::: {.kicker}
+Left: weight curves for several τ values, with τ = 180 days highlighted. Right: under τ = 180, just the newest ~80 batches capture half the bootstrap selection mass.
+:::
+
+```{r}
+#| fig-width: 11
+#| fig-height: 4.0
+age_grid <- seq(0, 730, by = 5)
+tau_vals <- c(30, 90, 180, 360)
+
+weight_curves <- expand.grid(age = age_grid, tau = tau_vals) %>%
+  mutate(weight = exp(-age / tau),
+         tau_label = factor(sprintf("τ = %d days", tau),
+                            levels = c("τ = 30 days",
+                                       "τ = 90 days",
+                                       "τ = 180 days",
+                                       "τ = 360 days")))
+
+# Uniform baseline as a flat line
+uniform_df <- data.frame(age = age_grid, weight = 1,
+                         tau_label = factor("uniform (τ = ∞)",
+                                            levels = c("uniform (τ = ∞)")))
+
+p_left <- ggplot() +
+  geom_line(data = uniform_df, aes(x = age, y = weight),
+            colour = "#3c4d6e", linewidth = 0.7, linetype = "dashed") +
+  geom_line(data = weight_curves %>% filter(tau != 180),
+            aes(x = age, y = weight, group = tau_label, colour = tau_label),
+            linewidth = 0.85) +
+  geom_line(data = weight_curves %>% filter(tau == 180),
+            aes(x = age, y = weight),
+            colour = accent, linewidth = 1.6) +
+  annotate("text", x = 180, y = exp(-1) + 0.02,
+           label = "τ = 180 days",
+           hjust = 0, vjust = 0,
+           family = "JetBrains Mono", colour = accent, size = 4) +
+  scale_colour_manual(values = c(
+    "τ = 30 days"  = slate_dim,
+    "τ = 90 days"  = slate_mut,
+    "τ = 360 days" = slate_lt
+  ), guide = "none") +
+  scale_x_continuous(breaks = c(0, 180, 360, 540, 720)) +
+  scale_y_continuous(limits = c(0, 1.05), expand = c(0, 0)) +
+  labs(x = "Batch age (days)", y = "Weight wᵢ = exp(-age/τ)") +
+  deck_theme(base_size = 13)
+
+batches_w <- batches %>%
+  mutate(age = as.numeric(max(mfg_date) - mfg_date),
+         w   = exp(-age / 180),
+         w   = w / sum(w)) %>%
+  arrange(desc(mfg_date)) %>%
+  mutate(rank     = row_number(),
+         cum_mass = cumsum(w))
+
+half_rank <- batches_w$rank[which.max(batches_w$cum_mass >= 0.5)]
+
+p_right <- ggplot(batches_w, aes(x = rank, y = cum_mass)) +
+  geom_line(colour = accent, linewidth = 1.4) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", colour = slate_dim, linewidth = 0.4) +
+  geom_vline(xintercept = half_rank, linetype = "dotted", colour = slate_mut, linewidth = 0.4) +
+  annotate("text", x = half_rank + 8, y = 0.5,
+           label = sprintf("50%% mass in newest %d batches", half_rank),
+           hjust = 0, vjust = -0.8,
+           family = "JetBrains Mono", colour = accent, size = 4) +
+  scale_x_continuous(breaks = seq(0, 500, by = 100)) +
+  scale_y_continuous(labels = label_percent(accuracy = 1),
+                     limits = c(0, 1.02), expand = c(0, 0)) +
+  labs(x = "Batches sorted newest to oldest", y = "Cumulative selection mass") +
+  deck_theme(base_size = 13)
+
+(p_left + p_right + plot_layout(ncol = 2)) &
+  theme(plot.background  = element_rect(fill = NA, colour = NA),
+        panel.background = element_rect(fill = NA, colour = NA))
+```
+
+[Source: weight curves analytic, cumulative mass computed on the actual 500-batch pool]{.source}
+
+
+## Tighter decay shrinks effective sample size; τ = 180 days sits in the bias and variance sweet spot {#sec-ess}
+
+[05 / Tradeoff]{.tracker}
+
+::: {.kicker}
+Effective sample size ESS = 1 / Σwᵢ² drops as decay tightens. At τ = 180 days the pool of 500 batches retains roughly 235 effective observations.
+:::
+
+```{r}
+#| fig-width: 10
+#| fig-height: 4.2
+ages_real <- as.numeric(max(batches$mfg_date) - batches$mfg_date)
+
+tau_grid <- c(seq(14, 90, length.out = 12),
+              seq(100, 1000, length.out = 24))
+
+ess_df <- tibble(tau = tau_grid,
+                 ess = map_dbl(tau_grid, function(tau) {
+                   w <- exp(-ages_real / tau)
+                   w <- w / sum(w)
+                   1 / sum(w^2)
+                 }))
+
+w_180 <- exp(-ages_real / 180); w_180 <- w_180 / sum(w_180)
+ess_180 <- 1 / sum(w_180^2)
+hl <- data.frame(tau = 180, ess = ess_180)
+
+ggplot(ess_df, aes(x = tau, y = ess)) +
+  geom_hline(yintercept = nrow(batches), colour = slate_dim,
+             linetype = "dashed", linewidth = 0.35) +
+  annotate("text", x = 14, y = nrow(batches), hjust = 0, vjust = -0.7,
+           label = sprintf("uniform (τ → ∞):  ESS = %d", nrow(batches)),
+           family = "JetBrains Mono", colour = slate_dim, size = 3.6) +
+  geom_line(colour = slate_mut, linewidth = 1.0) +
+  geom_point(data = hl, aes(x = tau, y = ess),
+             colour = accent, size = 5.5) +
+  annotate("text", x = 180, y = ess_180,
+           label = sprintf("τ = 180 days\nESS = %.0f", ess_180),
+           hjust = -0.18, vjust = 0.5,
+           family = "JetBrains Mono", colour = accent, size = 4.4,
+           lineheight = 1.0) +
+  scale_x_log10(breaks = c(14, 30, 90, 180, 360, 720),
+                labels = c("14", "30", "90", "180", "360", "720")) +
+  scale_y_continuous(breaks = seq(0, 500, by = 100),
+                     limits = c(0, 550), expand = c(0, 0)) +
+  labs(x = "τ (days, log scale)", y = "Effective sample size") +
+  deck_theme(base_size = 13)
+```
+
+[Source: ESS computed on actual 500-batch pool's age distribution]{.source}
+
+
+## Posit Connect Cloud + GitHub Actions + pins delivers versioned artifacts, scheduled retraining, and live serving {#sec-deploy}
+
+[06 / Deployment]{.tracker}
+
+::: {.kicker}
+The simulator publishes a primitives pin; GitHub Actions runs three scheduled Quarto jobs (train weekly, score daily, metrics weekly) writing model, predictions, and metrics pins; two Shiny apps on Posit Connect Cloud read those pins via `pins::board_url()` from GitHub raw.
+:::
+
+![](assets/architecture.png){width="80%" fig-align="center"}
+
+[Source: architecture as deployed; see `.github/workflows/{train,score,metrics}.yml`]{.source}
+
+
+## Two live apps and the full source are available for hands-on exploration {#sec-outro}
+
+[07 / Try it]{.tracker}
+
+```{=html}
+<div class="link-card-grid">
+  <a href="https://019e1a24-eacf-d91b-b0be-ca27f3127c5e.share.connect.posit.cloud/" class="link-card" target="_blank" rel="noopener">
+    <div class="link-card-label">Predictor</div>
+    <div class="link-card-title">Live what-if Shiny app</div>
+    <div class="link-card-cta">Open <span class="arrow">&rarr;</span></div>
+  </a>
+  <a href="https://019e1a33-702d-b0e0-d690-c7f82425c015.share.connect.posit.cloud/" class="link-card" target="_blank" rel="noopener">
+    <div class="link-card-label">Monitoring</div>
+    <div class="link-card-title">Calibration plus drift dashboard</div>
+    <div class="link-card-cta">Open <span class="arrow">&rarr;</span></div>
+  </a>
+  <a href="https://github.com/sanjinhosic/personal-posit-mlops-demo" class="link-card" target="_blank" rel="noopener">
+    <div class="link-card-label">Source</div>
+    <div class="link-card-title">GitHub repository</div>
+    <div class="link-card-cta">Open <span class="arrow">&rarr;</span></div>
+  </a>
+</div>
+```
+
+[Source: clone, install deps from .Rprofile / sessionInfo, run scripts/01_generate_primitives.R through 04_compute_metrics.R]{.source}

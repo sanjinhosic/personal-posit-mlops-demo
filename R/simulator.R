@@ -1,11 +1,14 @@
 # Generates synthetic multi-stage bioprocess recovery batches.
 # Stages 1 and 2 are stationary; stage 3 mean drifts upward with date,
 # motivating the time-decay weighting in the downstream training step.
+# A per-batch latent quality term shifts all three stage recoveries
+# together, introducing realistic within-batch covariance among r1, r2, r3.
 
 generate_recovery_batches <- function(n_batches      = 500,
                                       start_date     = as.Date("2023-01-01"),
                                       end_date       = as.Date("2024-12-31"),
-                                      drift_per_year = 0.04,
+                                      drift_per_year = 0.06,
+                                      batch_q_sd     = 0.07,
                                       seed           = 42) {
 
   set.seed(seed)
@@ -22,11 +25,20 @@ generate_recovery_batches <- function(n_batches      = 500,
 
   input_cells <- pmin(rlnorm(n_batches, log(2e9), 0.55), cap_input)
 
-  r1 <- rbeta(n_batches, 10, 6)
-  r2 <- rbeta(n_batches, 8, 6)
+  # Per-batch latent quality: a single random offset that shifts all
+  # three stage recoveries together. Good batches recover more across
+  # the whole chain; bad batches lose more at every step.
+  batch_q  <- rnorm(n_batches, mean = 0, sd = batch_q_sd)
+
+  r1_raw   <- rbeta(n_batches, 10, 6)
+  r2_raw   <- rbeta(n_batches, 8, 6)
   r3_mean  <- pmin(pmax(0.75 + drift_per_year * years_offset, 0.4), 0.95)
   r3_kappa <- 60
-  r3       <- rbeta(n_batches, r3_mean * r3_kappa, (1 - r3_mean) * r3_kappa)
+  r3_raw   <- rbeta(n_batches, r3_mean * r3_kappa, (1 - r3_mean) * r3_kappa)
+
+  r1 <- pmin(pmax(r1_raw + batch_q, 0.05), 0.99)
+  r2 <- pmin(pmax(r2_raw + batch_q, 0.05), 0.99)
+  r3 <- pmin(pmax(r3_raw + batch_q, 0.05), 0.99)
 
   stage1_output <- pmin(input_cells   * r1, cap_stage1)
   stage2_output <- pmin(stage1_output * r2, cap_stage2)

@@ -1,0 +1,11 @@
+file: predictions_history.rds
+file_size: 27686
+pin_hash: 586db60cbb8e53b2
+type: rds
+title: Per-batch predictions appended over time
+description: Idempotent on (batch_id, model_pin_hash); each retrain re-scores all
+  batches.
+tags: ~
+urls: ~
+created: 20260512T154244Z
+api_version: 1
