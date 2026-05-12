@@ -37,7 +37,7 @@ preds <- predict_yield(model, to_score$input_cells, n_compound = 5000)
 
 new_history <- data.frame(
   batch_id        = to_score$batch_id,
-  collection_date = to_score$collection_date,
+  mfg_date        = to_score$mfg_date,
   input_cells     = to_score$input_cells,
   q05             = preds$q05,
   q25             = preds$q25,

@@ -14,7 +14,7 @@ upstream_hash <- substr(digest(primitives, algo = "sha256"), 1, 12)
 # 3. Train ----
 model <- new_recovery_model(
   primitives,
-  reference_date = max(primitives$collection_date),
+  reference_date = max(primitives$mfg_date),
   decay_tau_days = 180,
   upstream_hash  = upstream_hash
 )

@@ -56,14 +56,11 @@ The simulator publishes `recovery_primitives` with:
 | Column | Type | Description |
 |--------|------|-------------|
 | batch_id | character | Unique per batch |
-| collection_date | Date | Spans 2 years; uniform sampling |
+| mfg_date | Date | Manufacturing date; spans 2 years; uniform sampling |
 | input_cells | numeric | Stage 0 input; lognormal; cap 5e9 |
 | stage1_output | numeric | After step 1; cap 3e9 |
 | stage2_output | numeric | After step 2; cap 1e9 |
 | stage3_output | numeric | Final yield |
-| donor_age | integer | Uniform 18-65; covariate |
-| equipment_id | factor | 4 levels; stratifier |
-| process_version | character | "v1" before midpoint, "v2" after |
 
 ## Drift design
 

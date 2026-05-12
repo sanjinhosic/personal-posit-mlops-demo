@@ -23,9 +23,9 @@ calibration$ape   <- abs(calibration$stage3_output - calibration$q50) /
                      calibration$stage3_output
 
 # 4. Drift via KS test on recent (last 90 days) vs baseline ----
-cutoff   <- max(primitives$collection_date) - 90
-recent   <- primitives[primitives$collection_date >= cutoff, ]
-baseline <- primitives[primitives$collection_date <  cutoff, ]
+cutoff   <- max(primitives$mfg_date) - 90
+recent   <- primitives[primitives$mfg_date >= cutoff, ]
+baseline <- primitives[primitives$mfg_date <  cutoff, ]
 
 vars <- c("input_cells", "stage1_output", "stage2_output", "stage3_output")
 drift <- do.call(rbind, lapply(vars, function(v) {

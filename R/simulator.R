@@ -32,23 +32,15 @@ generate_recovery_batches <- function(n_batches      = 500,
   stage2_output <- pmin(stage1_output * r2, cap_stage2)
   stage3_output <- stage2_output * r3
 
-  donor_age       <- sample(18:65, n_batches, replace = TRUE)
-  equipment_id    <- factor(sample(paste0("line_", 1:4), n_batches, replace = TRUE))
-  midpoint_date   <- as.Date(median(as.numeric(dates)), origin = "1970-01-01")
-  process_version <- ifelse(dates >= midpoint_date, "v2", "v1")
-
   tibble::tibble(
-    batch_id        = vapply(seq_len(n_batches),
-                             function(i) paste0(sample(c(letters, 0:9), 12, TRUE),
-                                                collapse = ""),
-                             character(1)),
-    collection_date = dates,
-    input_cells     = input_cells,
-    stage1_output   = stage1_output,
-    stage2_output   = stage2_output,
-    stage3_output   = stage3_output,
-    donor_age       = donor_age,
-    equipment_id    = equipment_id,
-    process_version = process_version
+    batch_id      = vapply(seq_len(n_batches),
+                           function(i) paste0(sample(c(letters, 0:9), 12, TRUE),
+                                              collapse = ""),
+                           character(1)),
+    mfg_date      = dates,
+    input_cells   = input_cells,
+    stage1_output = stage1_output,
+    stage2_output = stage2_output,
+    stage3_output = stage3_output
   )
 }

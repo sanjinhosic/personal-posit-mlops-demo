@@ -64,7 +64,7 @@ if (nrow(to_score) > 0) {
 
   new_history <- data.frame(
     batch_id        = to_score$batch_id,
-    collection_date = to_score$collection_date,
+    mfg_date        = to_score$mfg_date,
     input_cells     = to_score$input_cells,
     q05             = preds$q05,
     q25             = preds$q25,
@@ -93,7 +93,7 @@ if (nrow(to_score) > 0) {
 
 ```{r}
 if (nrow(to_score) > 0) {
-  knitr::kable(head(new_history[, c("batch_id", "collection_date",
+  knitr::kable(head(new_history[, c("batch_id", "mfg_date",
                                     "input_cells", "q25", "q50", "q75")], 10),
                digits = 3,
                caption = sprintf("First 10 of %d newly scored batches.",

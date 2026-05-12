@@ -15,13 +15,13 @@ board      <- board_folder(here::here("data", "pins"), versioned = TRUE)
 primitives <- pin_read(board, "recovery_primitives")
 
 # 2. Evaluation schedule ----
-start_eval <- min(primitives$collection_date) + 240
-end_eval   <- max(primitives$collection_date)
+start_eval <- min(primitives$mfg_date) + 240
+end_eval   <- max(primitives$mfg_date)
 eval_dates <- seq.Date(start_eval, end_eval, by = "6 weeks")
 
 # 3. Compute one metrics row per evaluation date ----
 metrics_rows <- lapply(eval_dates, function(eval_date) {
-  past <- primitives[primitives$collection_date <= eval_date, ]
+  past <- primitives[primitives$mfg_date <= eval_date, ]
   if (nrow(past) < 50) return(NULL)
 
   m    <- new_recovery_model(past, reference_date = eval_date)
@@ -33,8 +33,8 @@ metrics_rows <- lapply(eval_dates, function(eval_date) {
   ape   <- abs(past$stage3_output - preds$q50) / past$stage3_output
 
   cutoff   <- eval_date - 90
-  recent   <- past[past$collection_date >= cutoff, ]
-  baseline <- past[past$collection_date <  cutoff, ]
+  recent   <- past[past$mfg_date >= cutoff, ]
+  baseline <- past[past$mfg_date <  cutoff, ]
   if (nrow(recent) < 5 || nrow(baseline) < 5) return(NULL)
 
   vars  <- c("input_cells", "stage1_output", "stage2_output", "stage3_output")

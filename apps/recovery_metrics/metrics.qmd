@@ -72,9 +72,9 @@ ggplot(calibration, aes(x = q50, y = stage3_output)) +
 Recent (last 90 days) vs baseline (the rest).
 
 ```{r}
-cutoff   <- max(primitives$collection_date) - 90
-recent   <- primitives[primitives$collection_date >= cutoff, ]
-baseline <- primitives[primitives$collection_date <  cutoff, ]
+cutoff   <- max(primitives$mfg_date) - 90
+recent   <- primitives[primitives$mfg_date >= cutoff, ]
+baseline <- primitives[primitives$mfg_date <  cutoff, ]
 
 vars  <- c("input_cells", "stage1_output", "stage2_output", "stage3_output")
 drift <- do.call(rbind, lapply(vars, function(v) {

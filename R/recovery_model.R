@@ -13,7 +13,7 @@ new_recovery_model <- function(primitives,
                                upstream_hash   = NA_character_,
                                trained_on      = Sys.time()) {
 
-  required <- c("batch_id", "collection_date", "input_cells",
+  required <- c("batch_id", "mfg_date", "input_cells",
                 "stage1_output", "stage2_output", "stage3_output")
   stopifnot(is.data.frame(primitives),
             all(required %in% names(primitives)))
@@ -31,7 +31,7 @@ new_recovery_model <- function(primitives,
   r2 <- pool$stage2_output / stage2_denom
   r3 <- pool$stage3_output / stage3_denom
 
-  ages_days <- as.numeric(reference_date - pool$collection_date)
+  ages_days <- as.numeric(reference_date - pool$mfg_date)
   if (is.finite(decay_tau_days)) {
     raw_weights <- exp(-ages_days / decay_tau_days)
   } else {

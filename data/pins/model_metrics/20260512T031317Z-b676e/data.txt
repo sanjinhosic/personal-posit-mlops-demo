@@ -1,10 +1,10 @@
 file: model_metrics.rds
 file_size: 370
-pin_hash: d774e49091677210
+pin_hash: b676e726fc458697
 type: rds
 title: Calibration and drift metrics over time
 description: One row per (evaluation_date, model_pin_hash).
 tags: ~
 urls: ~
-created: 20260512T023218Z
+created: 20260512T031317Z
 api_version: 1

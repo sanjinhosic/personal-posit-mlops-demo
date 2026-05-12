@@ -2,12 +2,10 @@ source(testthat::test_path("..", "..", "R", "simulator.R"))
 
 test_that("simulator produces the documented schema", {
   df <- generate_recovery_batches(n_batches = 50)
-  required <- c("batch_id", "collection_date", "input_cells",
-                "stage1_output", "stage2_output", "stage3_output",
-                "donor_age", "equipment_id", "process_version")
-  expect_true(all(required %in% names(df)))
+  required <- c("batch_id", "mfg_date", "input_cells",
+                "stage1_output", "stage2_output", "stage3_output")
+  expect_setequal(names(df), required)
   expect_equal(nrow(df), 50)
-  expect_false("outcome_status" %in% names(df))
 })
 
 test_that("simulator is reproducible from seed", {
@@ -24,7 +22,7 @@ test_that("stage outputs respect denominator caps", {
 
 test_that("drift_per_year shifts stage 3 mean upward", {
   df_drift <- generate_recovery_batches(n_batches = 1000, drift_per_year = 0.1)
-  early <- df_drift[df_drift$collection_date < as.Date("2024-01-01"), ]
-  late  <- df_drift[df_drift$collection_date >= as.Date("2024-01-01"), ]
+  early <- df_drift[df_drift$mfg_date < as.Date("2024-01-01"), ]
+  late  <- df_drift[df_drift$mfg_date >= as.Date("2024-01-01"), ]
   expect_gt(median(late$stage3_output), median(early$stage3_output))
 })
