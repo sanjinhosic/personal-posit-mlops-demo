@@ -1,0 +1,129 @@
+---
+title: "Calibration and Drift Metrics"
+date: today
+date-format: "YYYY-MM-DD HH:mm z"
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+    toc: true
+    fig-width: 7
+    fig-height: 4
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+Computes interval coverage, MAPE, and KS drift statistics on the latest model.
+Upserts one row per `(evaluation_date, model_pin_hash)` into `model_metrics`.
+Scheduled weekly via GitHub Actions.
+
+## Setup
+
+```{r}
+library(here)
+library(pins)
+library(ggplot2)
+library(scales)
+
+board <- board_folder(here::here("data", "pins"), versioned = TRUE)
+```
+
+## Load inputs
+
+```{r}
+primitives <- pin_read(board, "recovery_primitives")
+history    <- pin_read(board, "predictions_history")
+
+current_model_hash <- history$model_pin_hash[which.max(history$scored_at)]
+latest_preds       <- history[history$model_pin_hash == current_model_hash, ]
+```
+
+## Calibration
+
+```{r}
+calibration <- merge(
+  latest_preds,
+  primitives[, c("batch_id", "stage3_output")],
+  by = "batch_id"
+)
+calibration$in_50 <- with(calibration, stage3_output >= q25 & stage3_output <= q75)
+calibration$in_95 <- with(calibration, stage3_output >= q05 & stage3_output <= q95)
+calibration$ape   <- abs(calibration$stage3_output - calibration$q50) /
+                     calibration$stage3_output
+```
+
+```{r}
+#| label: fig-calibration
+#| fig-cap: "Observed yield vs predicted median with 50% interval."
+ggplot(calibration, aes(x = q50, y = stage3_output)) +
+  geom_linerange(aes(ymin = q25, ymax = q75), alpha = 0.25) +
+  geom_point(alpha = 0.5, size = 1.2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "firebrick") +
+  scale_x_continuous(labels = label_number(scale = 1e-8, suffix = "e8")) +
+  scale_y_continuous(labels = label_number(scale = 1e-8, suffix = "e8")) +
+  labs(x = "Predicted q50 (cells)", y = "Observed yield (cells)") +
+  theme_minimal()
+```
+
+## Drift via KS test
+
+Recent (last 90 days) vs baseline (the rest).
+
+```{r}
+cutoff   <- max(primitives$collection_date) - 90
+recent   <- primitives[primitives$collection_date >= cutoff, ]
+baseline <- primitives[primitives$collection_date <  cutoff, ]
+
+vars  <- c("input_cells", "stage1_output", "stage2_output", "stage3_output")
+drift <- do.call(rbind, lapply(vars, function(v) {
+  k <- suppressWarnings(ks.test(recent[[v]], baseline[[v]]))
+  data.frame(variable = v,
+             D = unname(k$statistic),
+             p_value = k$p.value)
+}))
+
+knitr::kable(drift, digits = 4)
+```
+
+## Assemble and upsert metrics row
+
+```{r}
+metrics_row <- data.frame(
+  evaluation_date  = Sys.Date(),
+  model_pin_hash   = current_model_hash,
+  n_calibration    = nrow(calibration),
+  coverage_50      = mean(calibration$in_50),
+  coverage_95      = mean(calibration$in_95),
+  mape             = mean(calibration$ape),
+  drift_input_D    = drift$D[drift$variable == "input_cells"],
+  drift_input_p    = drift$p_value[drift$variable == "input_cells"],
+  drift_stage1_D   = drift$D[drift$variable == "stage1_output"],
+  drift_stage1_p   = drift$p_value[drift$variable == "stage1_output"],
+  drift_stage2_D   = drift$D[drift$variable == "stage2_output"],
+  drift_stage2_p   = drift$p_value[drift$variable == "stage2_output"],
+  drift_stage3_D   = drift$D[drift$variable == "stage3_output"],
+  drift_stage3_p   = drift$p_value[drift$variable == "stage3_output"],
+  stringsAsFactors = FALSE
+)
+
+existing <- tryCatch(pin_read(board, "model_metrics"), error = function(e) NULL)
+combined <- if (is.null(existing)) {
+  metrics_row
+} else {
+  key_match <- existing$evaluation_date == metrics_row$evaluation_date &
+               existing$model_pin_hash  == metrics_row$model_pin_hash
+  rbind(existing[!key_match, ], metrics_row)
+}
+
+pin_write(
+  board,
+  combined,
+  name        = "model_metrics",
+  type        = "rds",
+  title       = "Calibration and drift metrics over time"
+)
+
+knitr::kable(metrics_row, digits = 4)
+```

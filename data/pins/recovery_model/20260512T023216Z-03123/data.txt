@@ -1,0 +1,17 @@
+file: recovery_model.rds
+file_size: 14196
+pin_hash: 031239fc556334d3
+type: rds
+title: Multi-stage bootstrap recovery model
+description: Trained on 500 completed batches; decay tau 180 days; ESS 234.9.
+tags: ~
+urls: ~
+created: 20260512T023216Z
+api_version: 1
+user:
+  n_pool: 500
+  decay_tau_days: 180.0
+  decay_ess: 234.93
+  reference_date: '2024-12-29'
+  upstream_hash: 73c5068e42b8
+  trained_on: 2026-05-11 22:32:16

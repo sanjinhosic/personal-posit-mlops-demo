@@ -1,0 +1,18 @@
+file: recovery_primitives.rds
+file_size: 22738
+pin_hash: 90efb13741f4f0f8
+type: rds
+title: Synthetic multi-stage recovery batches
+description: Dated batches with three sequential recovery stages and slow stage-3
+  drift.
+tags: ~
+urls: ~
+created: 20260512T023215Z
+api_version: 1
+user:
+  n_batches: 500
+  date_range:
+  - '2023-01-02'
+  - '2024-12-29'
+  drift_per_year: 0.019
+  seed: 42.0

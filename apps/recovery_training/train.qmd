@@ -1,0 +1,85 @@
+---
+title: "Recovery Model Retraining"
+date: today
+date-format: "YYYY-MM-DD HH:mm z"
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+    toc: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+Retrains the multi-stage bootstrap recovery model on the latest committed `recovery_primitives` pin and publishes a versioned `recovery_model` artifact. Scheduled weekly via GitHub Actions.
+
+## Setup
+
+```{r}
+library(here)
+library(pins)
+library(digest)
+source(here::here("R", "recovery_model.R"))
+
+board <- board_folder(here::here("data", "pins"), versioned = TRUE)
+```
+
+## Read upstream primitives
+
+```{r}
+primitives    <- pin_read(board, "recovery_primitives")
+upstream_hash <- substr(digest(primitives, algo = "sha256"), 1, 12)
+
+knitr::kable(data.frame(
+  metric = c("Total batches", "Completed batches", "Termination rate",
+             "Date range", "Upstream hash"),
+  value  = c(
+    nrow(primitives),
+    sum(primitives$outcome_status == "Completed"),
+    sprintf("%.1f%%", 100 * mean(primitives$outcome_status == "Terminated")),
+    paste(format(min(primitives$collection_date)),
+          format(max(primitives$collection_date)), sep = " to "),
+    upstream_hash
+  )
+))
+```
+
+## Train
+
+```{r}
+model <- new_recovery_model(
+  primitives,
+  reference_date = max(primitives$collection_date),
+  decay_tau_days = 180,
+  upstream_hash  = upstream_hash
+)
+model
+```
+
+Time-decay weighting reduces the effective sample size from `r model$n_pool`
+completed batches to `r round(model$decay_ess, 1)`, emphasizing recent
+batches to track non-stationarity in stage 3 recovery.
+
+## Publish
+
+```{r}
+pin_write(
+  board,
+  model,
+  name        = "recovery_model",
+  type        = "rds",
+  title       = "Multi-stage bootstrap recovery model",
+  description = sprintf("Trained on %d completed batches; decay tau %d days; ESS %.1f.",
+                        model$n_pool, model$decay_tau_days, model$decay_ess),
+  metadata    = list(
+    n_pool         = model$n_pool,
+    decay_tau_days = model$decay_tau_days,
+    decay_ess      = round(model$decay_ess, 2),
+    reference_date = format(model$reference_date),
+    upstream_hash  = model$upstream_hash,
+    trained_on     = format(model$trained_on)
+  )
+)
+```

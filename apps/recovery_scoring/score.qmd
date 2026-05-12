@@ -1,0 +1,102 @@
+---
+title: "Daily Batch Scoring"
+date: today
+date-format: "YYYY-MM-DD HH:mm z"
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+    toc: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+Scores any primitives not yet seen under the current model and appends them to
+`predictions_history`. Idempotent on `(batch_id, model_pin_hash)`: a retrain
+produces a new model hash, which triggers re-scoring of every batch under the
+fresh model. Scheduled daily via GitHub Actions.
+
+## Setup
+
+```{r}
+library(here)
+library(pins)
+library(digest)
+source(here::here("R", "recovery_model.R"))
+
+board <- board_folder(here::here("data", "pins"), versioned = TRUE)
+```
+
+## Load model + primitives
+
+```{r}
+model          <- pin_read(board, "recovery_model")
+primitives     <- pin_read(board, "recovery_primitives")
+model_pin_hash <- substr(digest(model, algo = "sha256"), 1, 12)
+```
+
+## Anti-join against history
+
+```{r}
+history <- tryCatch(pin_read(board, "predictions_history"),
+                    error = function(e) NULL)
+
+already_scored <- if (is.null(history)) character(0) else
+  history$batch_id[history$model_pin_hash == model_pin_hash]
+
+to_score <- primitives[!primitives$batch_id %in% already_scored, ]
+
+knitr::kable(data.frame(
+  metric = c("Model pin hash", "History rows", "Batches to score"),
+  value  = c(model_pin_hash,
+             if (is.null(history)) 0 else nrow(history),
+             nrow(to_score))
+))
+```
+
+## Score and append
+
+```{r}
+if (nrow(to_score) > 0) {
+  preds <- predict_yield(model, to_score$input_cells, n_compound = 5000)
+
+  new_history <- data.frame(
+    batch_id        = to_score$batch_id,
+    collection_date = to_score$collection_date,
+    input_cells     = to_score$input_cells,
+    q05             = preds$q05,
+    q25             = preds$q25,
+    q50             = preds$q50,
+    q75             = preds$q75,
+    q95             = preds$q95,
+    model_pin_hash  = model_pin_hash,
+    scored_at       = Sys.time(),
+    stringsAsFactors = FALSE
+  )
+
+  combined <- if (is.null(history)) new_history else rbind(history, new_history)
+
+  pin_write(
+    board,
+    combined,
+    name        = "predictions_history",
+    type        = "rds",
+    title       = "Per-batch predictions appended over time",
+    description = "Idempotent on (batch_id, model_pin_hash)."
+  )
+}
+```
+
+## Sample of new predictions
+
+```{r}
+if (nrow(to_score) > 0) {
+  knitr::kable(head(new_history[, c("batch_id", "collection_date",
+                                    "input_cells", "q25", "q50", "q75")], 10),
+               digits = 3,
+               caption = sprintf("First 10 of %d newly scored batches.",
+                                 nrow(new_history)))
+}
+```
