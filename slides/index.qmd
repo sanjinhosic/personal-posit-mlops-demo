@@ -27,6 +27,7 @@ execute:
   echo: false
   warning: false
   message: false
+  freeze: auto
 knitr:
   opts_chunk:
     dev: svg
@@ -47,8 +48,110 @@ suppressPackageStartupMessages({
   library(patchwork)
 })
 
-source(here::here("R", "simulator.R"))
-source(here::here("R", "recovery_model.R"))
+# ----------------------------------------------------------------------------
+# Inlined from R/simulator.R and R/recovery_model.R so the slides directory
+# is self-contained for Posit Connect Cloud's render sandbox. Single source of
+# truth lives at R/ in the project root; keep these mirrors in sync.
+# ----------------------------------------------------------------------------
+
+generate_recovery_batches <- function(n_batches      = 500,
+                                      start_date     = as.Date("2023-01-01"),
+                                      end_date       = as.Date("2024-12-31"),
+                                      drift_per_year = 0.06,
+                                      batch_q_sd     = 0.07,
+                                      seed           = 42) {
+  set.seed(seed)
+  dates <- sort(sample(
+    seq.Date(start_date, end_date, by = "day"),
+    n_batches, replace = TRUE
+  ))
+  years_offset <- as.numeric(dates - mean(c(start_date, end_date))) / 365.25
+  cap_input  <- 5e9; cap_stage1 <- 3e9; cap_stage2 <- 1e9
+  input_cells <- pmin(rlnorm(n_batches, log(2e9), 0.55), cap_input)
+  batch_q  <- rnorm(n_batches, mean = 0, sd = batch_q_sd)
+  r1_raw   <- rbeta(n_batches, 10, 6)
+  r2_raw   <- rbeta(n_batches, 8, 6)
+  r3_mean  <- pmin(pmax(0.75 + drift_per_year * years_offset, 0.4), 0.95)
+  r3_kappa <- 60
+  r3_raw   <- rbeta(n_batches, r3_mean * r3_kappa, (1 - r3_mean) * r3_kappa)
+  r1 <- pmin(pmax(r1_raw + batch_q, 0.05), 0.99)
+  r2 <- pmin(pmax(r2_raw + batch_q, 0.05), 0.99)
+  r3 <- pmin(pmax(r3_raw + batch_q, 0.05), 0.99)
+  stage1_output <- pmin(input_cells   * r1, cap_stage1)
+  stage2_output <- pmin(stage1_output * r2, cap_stage2)
+  stage3_output <- stage2_output * r3
+  tibble::tibble(
+    batch_id      = vapply(seq_len(n_batches),
+                           function(i) paste0(sample(c(letters, 0:9), 12, TRUE),
+                                              collapse = ""),
+                           character(1)),
+    mfg_date      = dates,
+    input_cells   = input_cells,
+    stage1_output = stage1_output,
+    stage2_output = stage2_output,
+    stage3_output = stage3_output
+  )
+}
+
+new_recovery_model <- function(primitives,
+                               reference_date  = Sys.Date(),
+                               decay_tau_days  = 180,
+                               cap_input       = 5e9,
+                               cap_stage1      = 3e9,
+                               cap_stage2      = 1e9,
+                               upstream_hash   = NA_character_,
+                               trained_on      = Sys.time()) {
+  pool <- primitives
+  stage1_denom <- pmin(pool$input_cells,   cap_input)
+  stage2_denom <- pmin(pool$stage1_output, cap_stage1)
+  stage3_denom <- pmin(pool$stage2_output, cap_stage2)
+  r1 <- pool$stage1_output / stage1_denom
+  r2 <- pool$stage2_output / stage2_denom
+  r3 <- pool$stage3_output / stage3_denom
+  ages_days <- as.numeric(reference_date - pool$mfg_date)
+  raw_weights <- if (is.finite(decay_tau_days)) {
+    exp(-ages_days / decay_tau_days)
+  } else {
+    rep(1, length(ages_days))
+  }
+  weights   <- raw_weights / sum(raw_weights)
+  decay_ess <- 1 / sum(weights^2)
+  structure(
+    list(r1 = r1, r2 = r2, r3 = r3, weights = weights,
+         caps = list(input = cap_input, stage1 = cap_stage1, stage2 = cap_stage2),
+         reference_date = reference_date,
+         decay_tau_days = decay_tau_days,
+         decay_ess      = decay_ess,
+         n_pool         = nrow(pool),
+         upstream_hash  = upstream_hash,
+         trained_on     = trained_on),
+    class = "recovery_model"
+  )
+}
+
+.joint_draws <- function(model, n_compound) {
+  idx <- sample.int(model$n_pool, size = n_compound,
+                    replace = TRUE, prob = model$weights)
+  list(r1 = model$r1[idx], r2 = model$r2[idx], r3 = model$r3[idx])
+}
+
+.chain_yield <- function(input_cells, r1, r2, r3, caps) {
+  s1 <- pmin(pmin(input_cells, caps$input) * r1, caps$stage1)
+  s2 <- pmin(s1 * r2,                           caps$stage2)
+  s2 * r3
+}
+
+predict_yield <- function(model, input_cells, n_compound = 10000,
+                          probs = c(0.05, 0.25, 0.5, 0.75, 0.95)) {
+  draws <- .joint_draws(model, n_compound)
+  bands <- vapply(input_cells, function(x) {
+    quantile(.chain_yield(x, draws$r1, draws$r2, draws$r3, model$caps),
+             probs = probs, names = FALSE)
+  }, numeric(length(probs)))
+  out <- as.data.frame(t(bands))
+  names(out) <- paste0("q", sprintf("%02d", round(probs * 100)))
+  data.frame(input_cells = input_cells, out)
+}
 
 # Palette (must match slides SCSS)
 navy_bg   <- "#0a192f"
